@@ -1,0 +1,273 @@
+#!/bin/bash
+
+echo "############################################################"
+echo "############################################################"
+echo "#             _                                            #"  
+echo "# ____   ___ (_)___ _   _       _ __ ___  ___ ___   ______ #"
+echo "# |  _ \ / _ \| / __| | | |_____| '__/ _ \/ __/ _ \|  _  | #"
+echo "# | | | | (_) | \__ \ |_| |_____| | |  __/ (_| (_) | | | | #"
+echo "# |_| |_|\___/|_|___/\__, |     |_|  \___|\___\___/|_| |_| #"
+echo "#                     |___/                                #"
+echo "#                                                          #"
+echo "#  Created by: github.com/kingofleon                       #"
+echo "#                                                          #"
+echo "#  A simple recon script for CTFs / OSCP on Kali Linux     #"
+echo "#  Requirements: nmap-parse-output, SecLists and Gobuster  #"
+echo "#                                                          #"
+echo "#  Usage: ./noisy-recon <SINGLE IP>                        #"
+echo "#                                                          #"
+echo "#  Note: This only works on private IP addresses. This is  #"
+echo "#  a rather noisy/intrusive script. Read through it prior  #"
+echo "#  to using. Author makes no warranties or claims. Use     #"
+echo "#  at your own risk.                                       #"
+echo "#                                                          #"
+echo "############################################################"
+echo "############################################################"
+
+
+if ! [[ $1 ]]; then
+	echo "[-] Please enter an IP address"
+	exit 1
+fi
+
+ip=$1
+
+#Check for valid IP Address
+if ! [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+		echo "[-] Invalid IP address. Please double check."
+		exit 1
+	fi
+
+#Check IP Address is in private IP range
+if [[ ${ip::2} == '10' ]]; then
+	if ! [[ $ip =~ ^10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+		echo "[-] Non-private IP address."
+		exit 1
+	fi
+elif [[ ${ip::3} == '172' ]]; then
+	if ! [[ $ip =~ ^172\.[16-31]{1}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+		echo "[-] Non-private IP address."
+		exit 1
+	fi
+elif [[ ${ip::3} == '192' ]]; then
+	if ! [[ $ip =~ ^192\.168\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+		echo "[-] Non-private IP address."
+		exit 1
+	fi
+else
+	echo "[-] Non-private IP address."
+	exit 1
+fi
+
+#Check if nmap-parse-output is installed in /opt
+command -v /opt/nmap-parse-output/nmap-parse-output >/dev/null 2>&1 || { 
+	echo >&2 "Please clone nmap-parse-output into /opt first."; 
+	echo "Install instructions:";
+	echo "";
+	echo "  git clone https://github.com/ernw/nmap-parse-output.git /opt/nmap-parse-output";
+	echo "";
+	exit 1; }
+
+#Check if gobuster is installed
+command -v /usr/bin/gobuster >/dev/null 2>&1 || { 
+	echo >&2 "Please install gobuster first."; 
+	echo "";
+	echo "Install instructions:";
+	echo "  apt-get install gobuster";
+	echo "";
+	exit 1; }
+
+#Check if SecLists is included in /usr/share/wordlists/
+if [ ! -d "/usr/share/wordlists/SecLists" ]; then
+	echo "Please clone SecLists into /usr/share/wordlists first."
+	echo ""
+	echo "Install instructions:"
+	echo "  git clone https://github.com/danielmiessler/SecLists.git /usr/share/wordlists/SecLists"
+	exit 1
+fi
+
+#Check if IP dir already exists at /root/Desktop/$ip
+if [ -d "/root/Desktop/$ip" ]; then
+	printf "[?] Looks like a directory already exists for this IP. Should we exit? [Y,no] "
+	read -r exitVar
+	if [[ $exitVar == 'Y' ]]; then
+		echo "[-] Ok. Exiting."
+		exit 1
+	fi
+	printf "[?] Delete the existing directory? [Yes,n] "
+	read -r delDir
+	if [[ $delDir == 'Y' ]]; then
+		#Delete existing dirs
+		echo ""
+		rm -rf /root/Desktop/$ip
+		echo "[-] Existing directory deleted."
+		#Create directory structure
+		echo ""
+		mkdir /root/Desktop/$ip
+		mkdir /root/Desktop/$ip/scans
+		mkdir /root/Desktop/$ip/loot
+		touch /root/Desktop/$ip/notes.md
+		echo "[+] New directory structure created."
+	fi
+else
+	#Create directory structure
+	echo ""
+	mkdir /root/Desktop/$ip
+	mkdir /root/Desktop/$ip/scans
+	mkdir /root/Desktop/$ip/scans/nmap
+	mkdir /root/Desktop/$ip/scans/searchsploit
+	mkdir /root/Desktop/$ip/loot
+	touch /root/Desktop/$ip/notes.md
+	echo "[+] New directory structure created."
+fi
+
+#Run host discovery scan with nmap, exit if host is down.
+echo ""
+echo "[+] Running nmap host discovery."
+hostup=$(nmap -sn -PE -PS80,443,3389 -PP -PU161,40125 -PA21 --source-port 53 $ip)
+if [[ $hostup == *"down"* ]]; then 
+	echo "[-] The host is down. Exiting."
+	exit 1
+else 
+	printf "[\u2714] Host is up! Continuing with scans.\n"
+fi
+
+#Run a quick syn-based TCP nmap scan
+echo ""
+echo "[+] Running short TCP nmap scan."
+nmap -Pn -n -sS --top-ports=100 -T2 $ip --source-port 53 -oN /root/Desktop/$ip/scans/nmap/short-syn.nmap >/dev/null
+printf "[\u2714] Short nmap scan complete.\n"
+echo ""
+
+#Run a syn-based TCP n map scan against ALL ports
+echo "[+] Running full TCP nmap scan."
+nmap -Pn -n -sSV -sC -O -T4 -p- --reason --source-port 53 --traceroute $ip -oA /root/Desktop/$ip/scans/nmap/full-syn >/dev/null
+printf "[\u2714] Full nmap scan complete.\n"
+echo ""
+
+#Check Searshploit against the full TCP scan
+echo "[+] Running searchsploit on nmap scan results."
+searchsploit -x -v --exclude="/dos/" --nmap /root/Desktop/$ip/scans/nmap/full-syn.xml > /root/Desktop/$ip/scans/searchsploit/searchsploit.txt 2>/dev/null
+sed -i -e 's/\[01\;31m//g' /root/Desktop/$ip/scans/searchsploit/searchsploit.txt
+sed -i -e 's/\[K//g' /root/Desktop/$ip/scans/searchsploit/searchsploit.txt
+sed -i -e 's/\[m//g' /root/Desktop/$ip/scans/searchsploit/searchsploit.txt
+sed -i -e 's/\x1b//g' /root/Desktop/$ip/scans/searchsploit/searchsploit.txt
+printf "[\u2714] Searchsploit completed.\n"
+echo ""
+
+#HTTP(S) ENUMERATION
+#Run Gobuster, Nikto and WFuzz (user-agent fuzzing)
+echo "[i] Parsing HTTP ports for directory busting / nikto."
+echo ""
+httpPorts=$(/opt/nmap-parse-output/nmap-parse-output /root/Desktop/$ip/scans/nmap/full-syn.xml http-ports) 
+for localIP in $httpPorts; do
+	schema=$(echo $localIP | awk -F ':' '{print $1}')
+	port=$(echo $localIP | awk -F ':' '{print $3}')
+	#printf "Found $schema running on port $port, do you want to run a full directory bust and nikto scan? Y/n"
+	#read -r httpVar
+	#if [[ $httpVar != 'Y' ]]; then
+	#	echo "[-] Ok. Skipping."
+	#else
+	echo "[+] Creating subdirectory for port $port"
+	mkdir /root/Desktop/$ip/scans/$port
+	echo ""
+	echo "[+] Starting gobuster on $localIP"
+	gobuster -k -r -u $localIP -w /usr/share/wordlists/SecLists/Discovery/Web-Content/SVNDigger/all.txt -s 200,204,301,302,307,403,401 -o /root/Desktop/$ip/scans/$port/gobuster.txt -t 30 -a 'Mozilla/5.0 (X11; Linux x86_64; rv:52.0) Gecko/20100101 Firefox/52.0' >/dev/null
+	printf "[\u2714] Finished gobuster on $localIP\n"
+	echo ""
+	echo "[+] Starting nikto on $localIP"
+	nikto -host $localIP > /root/Desktop/$ip/scans/$port/nikto.txt
+	printf "[\u2714] Finished nikto on $localIP\n"
+	echo ""
+	echo "[+] Running wfuzz on User-Agent fields for $localIP"
+	wfuzz -z file,/usr/share/wordlists/SecLists/Fuzzing/User-Agents/user-agents-whatismybrowserdotcom-small.txt -H "User-Agent: FUZZ" $localIP > /root/Desktop/$ip/scans/$port/useragent.txt
+	sed -i -e 's/\[0m//g' /root/Desktop/$ip/scans/$port/useragent.txt
+	sed -i -e 's/\[0K//g' /root/Desktop/$ip/scans/$port/useragent.txt
+	sed -i -e 's/\x1b//g' /root/Desktop/$ip/scans/$port/useragent.txt
+	printf "[\u2714] Finished User-Agent fields for $localIP\n"
+	echo ""
+	#fi
+done
+
+#Enumerate LDAP
+#Run ldap-search.nse
+ldapPorts=$(/opt/nmap-parse-output/nmap-parse-output /root/Desktop/$ip/scans/nmap/full-syn.xml service ldap) 
+for localIP in $ldapPorts; do
+	port=$(echo $localIP | awk -F ':' '{print $2}')
+	echo "[+] Found ldap running on port $port, creating new sub-directory and performing enumeration."
+	mkdir /root/Desktop/$ip/scans/$port
+	nmap -Pn -p$port --script ldap-search $ip -oN /root/Desktop/$ip/scans/$port/ldap.nmap >/dev/null
+	printf "[\u2714] Finished ldap enumeration on port $port\n"
+done
+
+#Enumerate SMB
+#run nmap SMB scripts, nbtscan and enum4linux
+smbPorts=$(/opt/nmap-parse-output/nmap-parse-output /root/Desktop/$ip/scans/nmap/full-syn.xml service microsoft-ds)
+for localIP in $smbPorts; do
+	port=$(echo $localIP | awk -F ':' '{print $2}')
+	echo "[+] Found SMB running on port $port, creating new sub-directory and performing enumeration."
+	mkdir /root/Desktop/$ip/scans/$port
+	nmap -Pn -p$port --script smb-enum*,smb-vuln*,smb-os-discovery $ip  -oN /root/Desktop/$ip/scans/$port/smb.nmap >/dev/null
+	nbtscan $ip > /root/Desktop/$ip/scans/$port/nbtscan.txt
+	enum4linux -v $ip > /root/Desktop/$ip/scans/$port/enum4linux.txt
+	printf "[\u2714] Finished smb enumeration on port $port\n"
+done
+
+#Enumerate SMTP
+#Run smtp-enum-users.nse
+smtpPorts=$(/opt/nmap-parse-output/nmap-parse-output /root/Desktop/$ip/scans/nmap/full-syn.xml service smtp)
+for localIP in $smtpPorts; do
+	port=$(echo $localIP | awk -F ':' '{print $2}')
+	echo "[+] Found SMTP running on port $port, creating new sub-directory and performing enumeration."
+	mkdir /root/Desktop/$ip/scans/$port
+	nmap -Pn -p$port --script smtp-enum-users $ip -oN /root/Desktop/$ip/scans/$port/smtpenum.nmap >/dev/null
+	printf "[\u2714] Finished smtp enumeration on port $port\n"
+done
+
+#Enumerate RPC
+#Run rpcinfo + nfs-showmount.nse
+rpcPorts=$(/opt/nmap-parse-output/nmap-parse-output /root/Desktop/$ip/scans/nmap/full-syn.xml service rpcbind)
+for localIP in $rpcPorts; do
+	port=$(echo $localIP | awk -F ':' '{print $2}')
+	echo "[+] Found RPC running on port $port, creating new sub-directory and performing enumeration."
+	mkdir /root/Desktop/$ip/scans/$port
+	nmap -Pn -p$port --script nfs-showmount $ip -oN /root/Desktop/$ip/scans/$port/showmount.nmap >/dev/null
+	rpcinfo -p $ip > /root/Desktop/$ip/scans/$port/rpcinfo.txt
+	printf "[\u2714] Finished rpc enumeration on port $port\n"
+done
+
+#Enumerate MS-RPC
+#Run msrpc-enum.nse
+msrpcPorts=$(/opt/nmap-parse-output/nmap-parse-output /root/Desktop/$ip/scans/nmap/full-syn.xml service msrpc)
+for localIP in $msrpcPorts; do
+	port=$(echo $localIP | awk -F ':' '{print $2}')
+	echo "[+] Found MSRPC running on port $port, creating new sub-directory and performing enumeration."
+	mkdir /root/Desktop/$ip/scans/$port
+	nmap -Pn -p$port --script msrpc-enum $ip -oN /root/Desktop/$ip/scans/$port/msrpc.nmap >/dev/null
+	printf "[\u2714] Finished msrpc enumeration on port $port\n"
+done
+
+#Scan the top 300 UDP ports
+echo "[+] Running short UDP nmap scan."
+nmap -Pn -n -sU -sC -O -T4 --top-ports=300 --reason $ip -oA /root/Desktop/$ip/scans/nmap/udp-300 >/dev/null
+printf "[\u2714] Short UDP nmap scan complete."
+echo ""
+
+#Enumerate SNMP
+#Attempt to crack the community string, if found, run snmp-check
+snmpPorts=$(/opt/nmap-parse-output/nmap-parse-output /root/Desktop/$ip/scans/nmap/udp-300.xml service snmp)
+for localIP in $snmpPorts; do
+	port=$(echo $localIP | awk -F ':' '{print $2}')
+	echo "[+] Found SNMP running on UDP port $port, creating new sub-directory and performing enumeration."
+	mkdir /root/Desktop/$ip/scans/udp-$port
+	communityString=$(onesixtyone -c /usr/share/wordlists/SecLists/Discovery/SNMP/common-snmp-community-strings-onesixtyone.txt -i $ip)
+	if [[ $communityString == *"["* ]]; then
+		snmpPass=$(echo $communityString | cut -d "[" -f 2 | cut -d "]" -f 1)
+		snmp-check -p $port -c $snmpPass > /root/Desktop/$ip/scans/udp-$port/snmp-check.txt
+	fi
+	printf "[\u2714] Finished snmp enumeration on port $port\n"
+done
+echo ""
+printf "[\u2714] That's all folks."
+echo ""
+exit 0
