@@ -1,4 +1,4 @@
-#!/bin/bash
+quick#!/bin/bash
 
 echo "############################################################"
 echo "############################################################"
@@ -186,8 +186,31 @@ for localIP in $httpPorts; do
 	sed -i -e 's/\x1b//g' /root/Desktop/$ip/scans/$port/useragent.txt
 	printf "[\u2714] Finished User-Agent fields for $localIP\n"
 	echo ""
+	echo "[+] Creating wordlist with CeWL"
+	cewl -d 3 -m 5 $localIP >> /root/Desktop/$ip/customwordlist.txt
+	printf "[\u2714] Finished creating custom wordlist\n"
+	echo ""
 	#fi
 done
+
+#Create password list using Jumbo John rules
+if [ -f "/root/Desktop/$ip/customwordlist.txt" ]; then
+	echo "[+] Creating password list based on CeWL spidering"
+	cat /root/Desktop/$ip/customwordlist.txt | grep -v "CeWL" | uniq -u > /root/Desktop/$ip/cleaned-customwordlist.txt
+	rm /root/Desktop/$ip/customwordlist.txt
+	if [ -s /root/Desktop/$ip/cleaned-customwordlist.txt ]; then
+		cat /usr/share/wordlists/SecLists/Passwords/darkweb2017-top1000.txt >> /root/Desktop/$ip/cleaned-customwordlist.txt
+		john --wordlist=/root/Desktop/$ip/cleaned-customwordlist.txt --rules:Jumbo --stdout > /root/Desktop/$ip/custom_passwords.txt
+		rm /root/Desktop/$ip/cleaned-customwordlist.txt
+		cat /root/Desktop/$ip/custom_passwords.txt | uniq -u > /root/Desktop/$ip/custom_passwords.lst
+		rm /root/Desktop/$ip/custom_passwords.txt
+		printf "[\u2714] Custom password list generated.\n"
+		echo ""
+	else
+		rm /root/Desktop/$ip/cleaned-customwordlist.txt
+		printf "[\u2714] Custom password list failed to generate since it was empty.\n"
+		echo ""
+	fi
 
 #Enumerate LDAP
 #Run ldap-search.nse
