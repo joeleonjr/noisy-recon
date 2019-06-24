@@ -211,6 +211,7 @@ if [ -f "/root/Desktop/$ip/customwordlist.txt" ]; then
 		printf "[\u2714] Custom password list failed to generate since it was empty.\n"
 		echo ""
 	fi
+fi
 
 #Enumerate LDAP
 #Run ldap-search.nse
